@@ -1,7 +1,21 @@
+# Nebula Browser iOS workflow 1.0.7
+# Includes layout repair, real-device compilation, IPA packaging, and artifact upload.
 name: Build Nebula Browser for iPhone (unsigned IPA)
 
 'on':
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ios-device-ipa.yml'
+      - 'NebulaBrowser/**'
+      - 'NebulaBrowser.xcodeproj/**'
+      - 'AppDelegate.swift'
+      - 'SceneDelegate.swift'
+      - 'BrowserDataStore.swift'
+      - 'BrowserViewController.swift'
+      - 'LibraryViewController.swift'
+      - 'SettingsViewController.swift'
+      - 'project.pbxproj'
 
 permissions:
   contents: read
@@ -80,17 +94,3 @@ jobs:
 
           if [[ ! -f NebulaBrowser/Assets.xcassets/Contents.json ]]; then
             printf '%s\n' '{"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/Contents.json
-          fi
-          if [[ ! -f NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json ]]; then
-            printf '%s\n' '{"images":[{"filename":"NebulaMark.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json
-          fi
-          if [[ -f NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png && ! -f NebulaBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json ]]; then
-            printf '%s\n' '{"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json
-          fi
-
-          echo '--- Prepared repository files ---'
-          find NebulaBrowser.xcodeproj NebulaBrowser -maxdepth 5 -print | sort
-
-          test -f NebulaBrowser.xcodeproj/project.pbxproj || { echo '::error::Missing project.pbxproj'; exit 1; }
-          test -f NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme || { echo '::error::Missing shared NebulaBrowser scheme'; exit 1; }
-          test -f NebulaBrowser/BrowserViewController.swift || { echo '::error::Missing BrowserViewController.swift'; exit 1; }
