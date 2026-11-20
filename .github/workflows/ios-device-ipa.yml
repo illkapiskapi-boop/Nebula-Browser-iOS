@@ -1,21 +1,22 @@
-# Nebula Browser iOS workflow 1.0.8
-# Includes layout repair, real-device compilation, IPA packaging, and artifact upload.
+# Nebula Browser iOS - robust device IPA workflow
+# Handles both a correctly structured repository and files flattened by GitHub's web uploader.
 name: Build Nebula Browser for iPhone (unsigned IPA)
 
 'on':
   workflow_dispatch:
   push:
+    branches:
+      - main
     paths:
       - '.github/workflows/ios-device-ipa.yml'
       - 'NebulaBrowser/**'
       - 'NebulaBrowser.xcodeproj/**'
-      - 'AppDelegate.swift'
-      - 'SceneDelegate.swift'
-      - 'BrowserDataStore.swift'
-      - 'BrowserViewController.swift'
-      - 'LibraryViewController.swift'
-      - 'SettingsViewController.swift'
       - 'project.pbxproj'
+      - '*.swift'
+      - '*.plist'
+      - '*.storyboard'
+      - '*.png'
+      - 'Assets.xcassets/**'
 
 permissions:
   contents: read
@@ -31,66 +32,65 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Repair and validate uploaded project layout
         shell: bash
         run: |
           set -euo pipefail
-          echo 'Preparing the Xcode project from the files uploaded to the repository root...'
+          xcodebuild -version
+          xcodebuild -showsdks
 
-          # GitHub's web uploader previously placed the contents of the
-          # .xcodeproj bundle and the app source files directly in the repo root.
-          # Re-create the bundle and source-folder layout expected by the project.
-          if [[ ! -d NebulaBrowser.xcodeproj ]]; then
-            if [[ -f project.pbxproj ]]; then
-              mkdir -p NebulaBrowser.xcodeproj/xcshareddata/xcschemes
-              mv project.pbxproj NebulaBrowser.xcodeproj/project.pbxproj
-            else
-              echo '::error::Cannot find NebulaBrowser.xcodeproj or root project.pbxproj.'
-              ls -la
-              exit 1
-            fi
-          fi
+      - name: Repair and validate project layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          import sys
 
-          mkdir -p NebulaBrowser.xcodeproj/xcshareddata/xcschemes
-          if [[ -f NebulaBrowser.xcscheme && ! -f NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme ]]; then
-            mv NebulaBrowser.xcscheme NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme
-          fi
+          root = Path.cwd()
+          project_dir = root / "NebulaBrowser.xcodeproj"
+          source_dir = root / "NebulaBrowser"
+          scheme_dir = project_dir / "xcshareddata" / "xcschemes"
+          required_sources = [
+              "AppDelegate.swift",
+              "SceneDelegate.swift",
+              "BrowserDataStore.swift",
+              "BrowserViewController.swift",
+              "LibraryViewController.swift",
+              "SettingsViewController.swift",
+              "Info.plist",
+              "LaunchScreen.storyboard",
+              "PrivacyInfo.xcprivacy",
+          ]
 
-          mkdir -p NebulaBrowser
-          for file in \
-            AppDelegate.swift \
-            SceneDelegate.swift \
-            BrowserDataStore.swift \
-            BrowserViewController.swift \
-            LibraryViewController.swift \
-            SettingsViewController.swift \
-            Info.plist \
-            LaunchScreen.storyboard \
-            PrivacyInfo.xcprivacy; do
-            if [[ -f "$file" && ! -f "NebulaBrowser/$file" ]]; then
-              mv "$file" "NebulaBrowser/$file"
-            fi
-          done
+          def is_ignored(path: Path) -> bool:
+              return any(part in {".git", "build", "DerivedData"} for part in path.parts)
 
-          mkdir -p NebulaBrowser/Assets.xcassets
-          if [[ -d Assets.xcassets && ! -d NebulaBrowser/Assets.xcassets/NebulaMark.imageset ]]; then
-            cp -R Assets.xcassets/. NebulaBrowser/Assets.xcassets/
-          fi
+          def locate(name: str, preferred: Path):
+              if preferred.exists():
+                  return preferred
+              matches = [p for p in root.rglob(name) if not is_ignored(p.relative_to(root))]
+              if not matches:
+                  return None
+              matches.sort(key=lambda p: (len(p.relative_to(root).parts), str(p)))
+              return matches[0]
 
-          mkdir -p NebulaBrowser/Assets.xcassets/NebulaMark.imageset
-          mkdir -p NebulaBrowser/Assets.xcassets/AppIcon.appiconset
+          print("[INFO] Preparing the Xcode project layout...")
 
-          if [[ -f NebulaMark.png && ! -f NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png ]]; then
-            mv NebulaMark.png NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png
-          fi
-          if [[ -f Contents.json && ! -f NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json ]]; then
-            mv Contents.json NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json
-          fi
-          if [[ -f AppIcon.png && ! -f NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png ]]; then
-            mv AppIcon.png NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png
-          fi
+          # Re-create the .xcodeproj bundle if the web uploader flattened it.
+          if not project_dir.is_dir():
+              if project_dir.exists():
+                  raise SystemExit("[ERROR] NebulaBrowser.xcodeproj exists but is not a directory.")
+              pbx_source = locate("project.pbxproj", root / "project.pbxproj")
+              if pbx_source is None:
+                  raise SystemExit("[ERROR] project.pbxproj was not found in the repository.")
+              project_dir.mkdir(parents=True, exist_ok=True)
+              destination = project_dir / "project.pbxproj"
+              if pbx_source != destination:
+                  shutil.move(str(pbx_source), str(destination))
 
-          if [[ ! -f NebulaBrowser/Assets.xcassets/Contents.json ]]; then
-            printf '%s\n' '{"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/Contents.json
+          project_file = project_dir / "project.pbxproj"
+          if not project_file.is_file():
+              pbx_source = locate("project.pbxproj", root / "project.pbxproj")
+              if pbx_source is None:
+                  raise SystemExit("[ERROR] NebulaBrowser.xcodeproj/project.pbxproj is missing.")
