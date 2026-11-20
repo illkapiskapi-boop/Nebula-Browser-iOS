@@ -1,4 +1,4 @@
-# Nebula Browser iOS workflow 1.0.7
+# Nebula Browser iOS workflow 1.0.8
 # Includes layout repair, real-device compilation, IPA packaging, and artifact upload.
 name: Build Nebula Browser for iPhone (unsigned IPA)
 
