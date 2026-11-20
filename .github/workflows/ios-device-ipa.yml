@@ -1,115 +1,96 @@
-          if [[ ! -d "NebulaBrowser.xcodeproj" && -f "project.pbxproj" ]]; then
-            mkdir -p "NebulaBrowser.xcodeproj/xcshareddata/xcschemes"
-            mv "project.pbxproj" "NebulaBrowser.xcodeproj/project.pbxproj"
+name: Build Nebula Browser for iPhone (unsigned IPA)
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-device-ipa:
+    name: Build unsigned iPhone IPA
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Repair and validate uploaded project layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Preparing the Xcode project from the files uploaded to the repository root...'
+
+          # GitHub's web uploader previously placed the contents of the
+          # .xcodeproj bundle and the app source files directly in the repo root.
+          # Re-create the bundle and source-folder layout expected by the project.
+          if [[ ! -d NebulaBrowser.xcodeproj ]]; then
+            if [[ -f project.pbxproj ]]; then
+              mkdir -p NebulaBrowser.xcodeproj/xcshareddata/xcschemes
+              mv project.pbxproj NebulaBrowser.xcodeproj/project.pbxproj
+            else
+              echo '::error::Cannot find NebulaBrowser.xcodeproj or root project.pbxproj.'
+              ls -la
+              exit 1
+            fi
           fi
 
-          mkdir -p "NebulaBrowser.xcodeproj/xcshareddata/xcschemes"
-          if [[ -f "NebulaBrowser.xcscheme" && ! -f "NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme" ]]; then
-            mv "NebulaBrowser.xcscheme" "NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme"
+          mkdir -p NebulaBrowser.xcodeproj/xcshareddata/xcschemes
+          if [[ -f NebulaBrowser.xcscheme && ! -f NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme ]]; then
+            mv NebulaBrowser.xcscheme NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme
           fi
 
-          mkdir -p "NebulaBrowser"
-          for file in AppDelegate.swift SceneDelegate.swift BrowserDataStore.swift BrowserViewController.swift LibraryViewController.swift SettingsViewController.swift Info.plist LaunchScreen.storyboard PrivacyInfo.xcprivacy; do
+          mkdir -p NebulaBrowser
+          for file in \
+            AppDelegate.swift \
+            SceneDelegate.swift \
+            BrowserDataStore.swift \
+            BrowserViewController.swift \
+            LibraryViewController.swift \
+            SettingsViewController.swift \
+            Info.plist \
+            LaunchScreen.storyboard \
+            PrivacyInfo.xcprivacy; do
             if [[ -f "$file" && ! -f "NebulaBrowser/$file" ]]; then
               mv "$file" "NebulaBrowser/$file"
             fi
           done
 
-          # Rebuild the asset catalog from files that were also uploaded at root.
-          if [[ -d "Assets.xcassets" && ! -d "NebulaBrowser/Assets.xcassets" ]]; then
-            mv "Assets.xcassets" "NebulaBrowser/Assets.xcassets"
-          fi
-          mkdir -p "NebulaBrowser/Assets.xcassets/NebulaMark.imageset"
-          mkdir -p "NebulaBrowser/Assets.xcassets/AppIcon.appiconset"
-
-          if [[ -f "NebulaMark.png" && ! -f "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png" ]]; then
-            mv "NebulaMark.png" "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png"
-          fi
-          if [[ -f "Contents.json" && ! -f "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json" ]]; then
-            mv "Contents.json" "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json"
-          fi
-          if [[ -f "AppIcon.png" && ! -f "NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png" ]]; then
-            mv "AppIcon.png" "NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+          mkdir -p NebulaBrowser/Assets.xcassets
+          if [[ -d Assets.xcassets && ! -d NebulaBrowser/Assets.xcassets/NebulaMark.imageset ]]; then
+            cp -R Assets.xcassets/. NebulaBrowser/Assets.xcassets/
           fi
 
-          if [[ ! -f "NebulaBrowser/Assets.xcassets/Contents.json" ]]; then
-            cat > "NebulaBrowser/Assets.xcassets/Contents.json" <<'JSON'
-          {"info":{"author":"xcode","version":1}}
-          JSON
+          mkdir -p NebulaBrowser/Assets.xcassets/NebulaMark.imageset
+          mkdir -p NebulaBrowser/Assets.xcassets/AppIcon.appiconset
+
+          if [[ -f NebulaMark.png && ! -f NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png ]]; then
+            mv NebulaMark.png NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png
           fi
-          if [[ ! -f "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json" ]]; then
-            cat > "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json" <<'JSON'
-          {"images":[{"filename":"NebulaMark.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}
-          JSON
+          if [[ -f Contents.json && ! -f NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json ]]; then
+            mv Contents.json NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json
           fi
-          if [[ -f "NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png" && ! -f "NebulaBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json" ]]; then
-            cat > "NebulaBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json" <<'JSON'
-          {"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}
-          JSON
+          if [[ -f AppIcon.png && ! -f NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png ]]; then
+            mv AppIcon.png NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png
           fi
 
-          echo "--- Repository root after preparation ---"
-          ls -la
-          echo "--- Xcode project tree ---"
+          if [[ ! -f NebulaBrowser/Assets.xcassets/Contents.json ]]; then
+            printf '%s\n' '{"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/Contents.json
+          fi
+          if [[ ! -f NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json ]]; then
+            printf '%s\n' '{"images":[{"filename":"NebulaMark.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/NebulaMark.imageset/Contents.json
+          fi
+          if [[ -f NebulaBrowser/Assets.xcassets/AppIcon.appiconset/AppIcon.png && ! -f NebulaBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json ]]; then
+            printf '%s\n' '{"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > NebulaBrowser/Assets.xcassets/AppIcon.appiconset/Contents.json
+          fi
+
+          echo '--- Prepared repository files ---'
           find NebulaBrowser.xcodeproj NebulaBrowser -maxdepth 5 -print | sort
 
-          test -f "NebulaBrowser.xcodeproj/project.pbxproj"
-          test -f "NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme"
-          test -f "NebulaBrowser/BrowserViewController.swift"
-          test -f "NebulaBrowser/Info.plist"
-          test -f "NebulaBrowser/Assets.xcassets/Contents.json"
-          test -f "NebulaBrowser/Assets.xcassets/NebulaMark.imageset/NebulaMark.png"
-          echo "[OK] Xcode project structure is ready."
-
-      - name: List Xcode project and schemes
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -list -project NebulaBrowser.xcodeproj
-
-      - name: Build for real iOS devices (not Simulator)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build
-          set -o pipefail
-          xcodebuild \
-            -project NebulaBrowser.xcodeproj \
-            -scheme NebulaBrowser \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY='' \
-            build 2>&1 | tee build/xcodebuild.log
-
-      - name: Package unsigned IPA
-        shell: bash
-        run: |
-          set -euo pipefail
-          APP_PATH='build/DerivedData/Build/Products/Release-iphoneos/NebulaBrowser.app'
-          test -d "$APP_PATH"
-          mkdir -p build/ipa/Payload
-          cp -R "$APP_PATH" build/ipa/Payload/NebulaBrowser.app
-          (cd build/ipa && /usr/bin/zip -qry NebulaBrowser-Unsigned-iOS.ipa Payload)
-          test -s build/ipa/NebulaBrowser-Unsigned-iOS.ipa
-          /usr/bin/unzip -l build/ipa/NebulaBrowser-Unsigned-iOS.ipa | head -40
-
-      - name: Upload unsigned iPhone IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: NebulaBrowser-iOS-Unsigned-IPA
-          path: build/ipa/NebulaBrowser-Unsigned-iOS.ipa
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Xcode build log when build fails
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NebulaBrowser-iOS-Xcode-Failure-Log
-          path: build/xcodebuild.log
-          if-no-files-found: ignore
-          retention-days: 7
+          test -f NebulaBrowser.xcodeproj/project.pbxproj || { echo '::error::Missing project.pbxproj'; exit 1; }
+          test -f NebulaBrowser.xcodeproj/xcshareddata/xcschemes/NebulaBrowser.xcscheme || { echo '::error::Missing shared NebulaBrowser scheme'; exit 1; }
+          test -f NebulaBrowser/BrowserViewController.swift || { echo '::error::Missing BrowserViewController.swift'; exit 1; }
