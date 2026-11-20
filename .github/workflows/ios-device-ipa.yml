@@ -94,3 +94,177 @@ jobs:
               pbx_source = locate("project.pbxproj", root / "project.pbxproj")
               if pbx_source is None:
                   raise SystemExit("[ERROR] NebulaBrowser.xcodeproj/project.pbxproj is missing.")
+              project_file.parent.mkdir(parents=True, exist_ok=True)
+              if pbx_source != project_file:
+                  shutil.move(str(pbx_source), str(project_file))
+
+          # Put the source files in the exact folder referenced by project.pbxproj.
+          source_dir.mkdir(parents=True, exist_ok=True)
+          for filename in required_sources:
+              destination = source_dir / filename
+              if destination.is_file():
+                  continue
+              candidate = locate(filename, root / filename)
+              if candidate is None:
+                  raise SystemExit(f"[ERROR] Required project file is missing: {filename}")
+              if candidate == destination:
+                  continue
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.move(str(candidate), str(destination))
+
+          # Put asset catalogs under the source group expected by project.pbxproj.
+          assets_destination = source_dir / "Assets.xcassets"
+          if not assets_destination.is_dir():
+              assets_source = locate("Assets.xcassets", root / "Assets.xcassets")
+              if assets_source is not None and assets_source.is_dir():
+                  shutil.copytree(assets_source, assets_destination, dirs_exist_ok=True)
+          else:
+              assets_source = root / "Assets.xcassets"
+              if assets_source.is_dir() and assets_source != assets_destination:
+                  shutil.copytree(assets_source, assets_destination, dirs_exist_ok=True)
+
+          assets_destination.mkdir(parents=True, exist_ok=True)
+          (assets_destination / "Contents.json").write_text(
+              '{"info":{"author":"xcode","version":1}}\n', encoding="utf-8"
+          ) if not (assets_destination / "Contents.json").is_file() else None
+
+          # Repair individual image files if the web uploader flattened an asset catalog.
+          mark_dir = assets_destination / "NebulaMark.imageset"
+          icon_dir = assets_destination / "AppIcon.appiconset"
+          mark_dir.mkdir(parents=True, exist_ok=True)
+          icon_dir.mkdir(parents=True, exist_ok=True)
+
+          for filename, target in [
+              ("NebulaMark.png", mark_dir / "NebulaMark.png"),
+              ("AppIcon.png", icon_dir / "AppIcon.png"),
+          ]:
+              if target.is_file():
+                  continue
+              candidate = locate(filename, root / filename)
+              if candidate is not None and candidate.is_file() and candidate != target:
+                  shutil.move(str(candidate), str(target))
+
+          mark_contents = mark_dir / "Contents.json"
+          if not mark_contents.is_file() and (mark_dir / "NebulaMark.png").is_file():
+              mark_contents.write_text(
+                  '{"images":[{"filename":"NebulaMark.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}\n',
+                  encoding="utf-8",
+              )
+
+          icon_contents = icon_dir / "Contents.json"
+          if not icon_contents.is_file() and (icon_dir / "AppIcon.png").is_file():
+              icon_contents.write_text(
+                  '{"images":[{"filename":"AppIcon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n',
+                  encoding="utf-8",
+              )
+
+          # Restore the shared scheme if it was uploaded at the repository root.
+          scheme_dir.mkdir(parents=True, exist_ok=True)
+          scheme_destination = scheme_dir / "NebulaBrowser.xcscheme"
+          if not scheme_destination.is_file():
+              scheme_source = locate("NebulaBrowser.xcscheme", root / "NebulaBrowser.xcscheme")
+              if scheme_source is not None and scheme_source.is_file():
+                  shutil.move(str(scheme_source), str(scheme_destination))
+
+          # If the scheme file was omitted by the uploader, generate the shared scheme
+          # for this project's stable target identifier.
+          if not scheme_destination.is_file():
+              scheme_destination.write_text('''<?xml version="1.0" encoding="UTF-8"?>
+          <Scheme LastUpgradeVersion="2700" version="1.7">
+             <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+                <BuildActionEntries>
+                   <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">
+                      <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E10000000000000000000001" BuildableName="NebulaBrowser.app" BlueprintName="NebulaBrowser" ReferencedContainer="container:NebulaBrowser.xcodeproj"/>
+                   </BuildActionEntry>
+                </BuildActionEntries>
+             </BuildAction>
+             <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher" shouldUseLaunchSchemeArgsEnv="YES"/>
+             <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" allowLocationSimulation="YES">
+                <BuildableProductRunnable runnableDebuggingMode="0">
+                   <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E10000000000000000000001" BuildableName="NebulaBrowser.app" BlueprintName="NebulaBrowser" ReferencedContainer="container:NebulaBrowser.xcodeproj"/>
+                </BuildableProductRunnable>
+             </LaunchAction>
+             <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES">
+                <BuildableProductRunnable runnableDebuggingMode="0">
+                   <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E10000000000000000000001" BuildableName="NebulaBrowser.app" BlueprintName="NebulaBrowser" ReferencedContainer="container:NebulaBrowser.xcodeproj"/>
+                </BuildableProductRunnable>
+             </ProfileAction>
+             <AnalyzeAction buildConfiguration="Debug"/>
+             <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
+          </Scheme>
+          ''', encoding="utf-8")
+
+          # Validate all paths used by the Xcode project and workflow.
+          checks = [
+              project_file,
+              scheme_destination,
+              source_dir / "BrowserViewController.swift",
+              source_dir / "Info.plist",
+              source_dir / "LaunchScreen.storyboard",
+              source_dir / "Assets.xcassets" / "Contents.json",
+          ]
+          missing = [str(p.relative_to(root)) for p in checks if not p.is_file()]
+          if missing:
+              raise SystemExit("[ERROR] Required paths are missing: " + ", ".join(missing))
+
+          print("[OK] Project files are ready:")
+          for item in [project_file, scheme_destination, *[source_dir / f for f in required_sources], assets_destination]:
+              print(" -", item.relative_to(root))
+          PY
+
+      - name: Validate Xcode project and scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project NebulaBrowser.xcodeproj
+          echo "[OK] Xcode project and scheme were recognized."
+
+      - name: Build for a real iPhone (not Simulator)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild \
+            -project NebulaBrowser.xcodeproj \
+            -scheme NebulaBrowser \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY='' \
+            build 2>&1 | tee build/xcodebuild.log
+
+      - name: Package unsigned iPhone IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/NebulaBrowser.app"
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "::error::Xcode completed without producing NebulaBrowser.app."
+            exit 1
+          fi
+          mkdir -p build/ipa/Payload
+          ditto "$APP_PATH" "build/ipa/Payload/NebulaBrowser.app"
+          (cd build/ipa && /usr/bin/zip -qry NebulaBrowser-Unsigned-iOS.ipa Payload)
+          test -s build/ipa/NebulaBrowser-Unsigned-iOS.ipa
+          /usr/bin/unzip -l build/ipa/NebulaBrowser-Unsigned-iOS.ipa | head -40
+          echo "[OK] Unsigned device IPA created."
+
+      - name: Upload unsigned iPhone IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: NebulaBrowser-iOS-Unsigned-IPA
+          path: build/ipa/NebulaBrowser-Unsigned-iOS.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Xcode build log for troubleshooting
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NebulaBrowser-iOS-Xcode-Build-Log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
