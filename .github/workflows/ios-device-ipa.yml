@@ -1,4 +1,4 @@
-# Nebula Browser iOS - robust device IPA workflow
+# Nebula Browser iOS - robust device IPA workflow with plist-reference repair
 # Handles both a correctly structured repository and files flattened by GitHub's web uploader.
 name: Build Nebula Browser for iPhone (unsigned IPA)
 
@@ -211,6 +211,147 @@ jobs:
           for item in [project_file, scheme_destination, *[source_dir / f for f in required_sources], assets_destination]:
               print(" -", item.relative_to(root))
           PY
+
+      - name: Repair Info.plist and PrivacyInfo resource references
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          project = Path("NebulaBrowser.xcodeproj/project.pbxproj")
+          if not project.is_file():
+              raise SystemExit(f"[ERROR] Xcode project file not found: {project}")
+          text = project.read_text(encoding="utf-8")
+
+          def get_section(source, name):
+              begin = f"/* Begin {name} section */"
+              end = f"/* End {name} section */"
+              first = source.find(begin)
+              last = source.find(end)
+              if first < 0 or last < first:
+                  raise SystemExit(f"[ERROR] Could not find {name} in project.pbxproj")
+              last += len(end)
+              return first, last, source[first:last]
+
+          def object_id(line):
+              fields = line.strip().split()
+              if fields and re.fullmatch(r"[A-Fa-f0-9]{24}", fields[0]):
+                  return fields[0]
+              return None
+
+          _, _, file_refs = get_section(text, "PBXFileReference")
+          build_start, build_end, build_section = get_section(text, "PBXBuildFile")
+          resources_start, resources_end, resources_section = get_section(text, "PBXResourcesBuildPhase")
+
+          info_ref_ids = set()
+          privacy_ref_ids = set()
+          for line in file_refs.splitlines():
+              ref_id = object_id(line)
+              if not ref_id or "isa = PBXFileReference;" not in line:
+                  continue
+              if "Info.plist" in line:
+                  info_ref_ids.add(ref_id)
+              if "PrivacyInfo.xcprivacy" in line:
+                  privacy_ref_ids.add(ref_id)
+
+          if not info_ref_ids:
+              raise SystemExit("[ERROR] Could not identify the Info.plist file reference.")
+          if not privacy_ref_ids:
+              raise SystemExit("[ERROR] Could not identify the PrivacyInfo.xcprivacy file reference.")
+          privacy_ref_id = sorted(privacy_ref_ids)[0]
+
+          # The project uploaded to GitHub had a PBXBuildFile labelled
+          # PrivacyInfo.xcprivacy in Resources, but its fileRef pointed to the
+          # Info.plist PBXFileReference. Relink it to the actual privacy manifest.
+          fixed_privacy_build_ids = set()
+          duplicate_info_build_ids = set()
+          new_build_lines = []
+          for line in build_section.splitlines(keepends=True):
+              build_id = object_id(line)
+              if "isa = PBXBuildFile;" not in line or not build_id:
+                  new_build_lines.append(line)
+                  continue
+
+              file_ref_match = re.search(r"fileRef\s*=\s*([A-Fa-f0-9]{24})", line)
+              referenced_id = file_ref_match.group(1) if file_ref_match else None
+              is_privacy_resource = "PrivacyInfo.xcprivacy in Resources" in line
+
+              if is_privacy_resource:
+                  if referenced_id != privacy_ref_id:
+                      line, count = re.subn(
+                          r"(fileRef\s*=\s*)[A-Fa-f0-9]{24}(?:\s*/\*.*?\*/)?\s*;",
+                          lambda match: match.group(1) + privacy_ref_id + " /* PrivacyInfo.xcprivacy */;",
+                          line,
+                          count=1,
+                      )
+                      if count != 1:
+                          raise SystemExit("[ERROR] Could not repair the PrivacyInfo.xcprivacy fileRef entry.")
+                      print(f"[OK] Relinked PrivacyInfo.xcprivacy build file {build_id} to {privacy_ref_id}.")
+                  fixed_privacy_build_ids.add(build_id)
+                  new_build_lines.append(line)
+                  continue
+
+              if referenced_id in info_ref_ids or "Info.plist in Resources" in line:
+                  duplicate_info_build_ids.add(build_id)
+                  print(f"[INFO] Marked duplicate Info.plist resource build file for removal: {build_id}")
+                  continue
+
+              new_build_lines.append(line)
+
+          # Remove duplicate Info.plist entries from Copy Bundle Resources, while
+          # keeping the corrected PrivacyInfo.xcprivacy resource entry.
+          new_resource_lines = []
+          removed_resource_ids = set()
+          for line in resources_section.splitlines(keepends=True):
+              resource_id = object_id(line)
+              if resource_id in duplicate_info_build_ids:
+                  removed_resource_ids.add(resource_id)
+                  continue
+              if "Info.plist in Resources" in line:
+                  if resource_id:
+                      removed_resource_ids.add(resource_id)
+                  continue
+              new_resource_lines.append(line)
+
+          # Ensure a removed PBXBuildFile object is not left referenced in resources.
+          if removed_resource_ids != duplicate_info_build_ids.intersection(removed_resource_ids):
+              print("[INFO] Some duplicate resource labels were repaired by their PBXBuildFile IDs.")
+
+          new_build_section = "".join(new_build_lines)
+          new_resources_section = "".join(new_resource_lines)
+          text = text[:resources_start] + new_resources_section + text[resources_end:]
+          build_start, build_end, _ = get_section(text, "PBXBuildFile")
+          text = text[:build_start] + new_build_section + text[build_end:]
+          project.write_text(text, encoding="utf-8")
+
+          # Verify the privacy build-file now points to PrivacyInfo.xcprivacy and
+          # no resource build-file points to Info.plist.
+          final_text = project.read_text(encoding="utf-8")
+          _, _, final_build_section = get_section(final_text, "PBXBuildFile")
+          _, _, final_resources_section = get_section(final_text, "PBXResourcesBuildPhase")
+          build_ref_by_id = {}
+          for line in final_build_section.splitlines():
+              build_id = object_id(line)
+              ref_match = re.search(r"fileRef\s*=\s*([A-Fa-f0-9]{24})", line)
+              if build_id and ref_match and "isa = PBXBuildFile;" in line:
+                  build_ref_by_id[build_id] = ref_match.group(1)
+
+          for line in final_resources_section.splitlines():
+              resource_id = object_id(line)
+              if resource_id and build_ref_by_id.get(resource_id) in info_ref_ids:
+                  raise SystemExit("[ERROR] Copy Bundle Resources still contains a reference to Info.plist.")
+          if "INFOPLIST_FILE = NebulaBrowser/Info.plist;" not in final_text:
+              raise SystemExit("[ERROR] INFOPLIST_FILE setting is missing or unexpected.")
+          if not any("PrivacyInfo.xcprivacy in Resources" in line for line in final_build_section.splitlines()):
+              print("[WARNING] PrivacyInfo.xcprivacy is not configured as a resource build file.")
+          else:
+              print("[OK] PrivacyInfo.xcprivacy remains a bundle resource.")
+          print("[OK] Info.plist will be processed exactly once by Xcode.")
+          PY
+          echo "[INFO] Relevant plist references after repair:"
+          grep -n -E 'Info.plist|PrivacyInfo.xcprivacy|INFOPLIST_FILE' NebulaBrowser.xcodeproj/project.pbxproj || true
 
       - name: Validate Xcode project and scheme
         shell: bash
